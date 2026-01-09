@@ -1,0 +1,34 @@
+{
+  "name": "x402-firewall-backend",
+  "version": "0.1.0",
+  "description": "AI-powered middleware for x402 payment evaluation on Cronos EVM",
+  "main": "dist/middleware.js",
+  "types": "dist/types.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node src/index.ts",
+    "test": "jest",
+    "lint": "eslint src/",
+    "clean": "rm -rf dist/"
+  },
+  "keywords": [
+    "x402",
+    "cronos",
+    "evm",
+    "payment",
+    "firewall",
+    "ai",
+    "risk",
+    "intent"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}

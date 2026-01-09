@@ -1,0 +1,27 @@
+{
+  "name": "x402-firewall",
+  "version": "0.1.0",
+  "description": "Developer SDK for x402 Intent Firewall on Cronos",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist/"
+  },
+  "keywords": [
+    "x402",
+    "cronos",
+    "evm",
+    "payment",
+    "firewall",
+    "sdk",
+    "integration"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.3"
+  }
+}
