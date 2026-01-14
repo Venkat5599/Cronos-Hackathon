@@ -3,372 +3,308 @@ pragma solidity ^0.8.19;
 
 /**
  * @title X402PolicyEngine
- * @notice On-chain policy enforcement for x402 Intent Firewall
- * @dev Receives x402 payment requests, applies policy rules, and enforces decisions
- *
- * This contract serves as the enforcement layer for the AI-powered middleware.
- * The AI agent (off-chain) makes decisions, but this contract validates and
- * applies them on-chain with gas-efficient policy checks.
+ * @notice Deterministic on-chain policy checker for x402 payments
+ * @dev Called by X402ExecutionRouter BEFORE any funds move
+ * 
+ * This contract contains NO trust assumptions:
+ * - All rules are deterministic and auditable
+ * - No off-chain data, no oracles, no AI
+ * - Returns (bool allowed, string reason) for every check
  */
-
 contract X402PolicyEngine {
-  // ============================================================================
-  // TYPES
-  // ============================================================================
-
-  /// @notice Possible payment decision states
-  enum Decision {
-    ALLOW,
-    BLOCK,
-    LIMIT,
-    DELAY
-  }
-
-  /// @notice Policy configuration per recipient
-  struct RecipientPolicy {
-    bool exists;
-    uint256 maxAmountPerTx; // max CRO per single transaction
-    uint256 maxAmountPerDay; // max CRO per day
-    uint256 minDelayBetweenTx; // min seconds between txs
-    bool isBlacklisted;
-    address[] allowedSenders; // empty = any sender allowed
-  }
-
-  /// @notice Payment attempt record
-  struct PaymentAttempt {
-    address sender;
-    address recipient;
-    uint256 amount;
-    uint256 timestamp;
-    Decision decision;
-    string reason;
-  }
-
-  /// @notice Agent authorization record
-  struct AgentPermission {
-    bool active;
-    uint256 revokeAt; // 0 = no expiration, otherwise block.timestamp when revoked
-    string[] permissions; // "EVALUATE", "ENFORCE", etc
-  }
-
-  // ============================================================================
-  // STATE
-  // ============================================================================
-
-  address public owner;
-  mapping(address => AgentPermission) public agents;
-  mapping(address => RecipientPolicy) public policies;
-  mapping(address => uint256) public lastPaymentTime; // recipient -> timestamp
-  mapping(address => uint256) public dailySpent; // recipient -> amount spent today
-  mapping(address => uint256) public dailySpentResetAt; // recipient -> when to reset counter
-
-  PaymentAttempt[] public attemptHistory;
-
-  // ============================================================================
-  // EVENTS
-  // ============================================================================
-
-  event PaymentDecisionRecorded(
-    address indexed recipient,
-    address indexed sender,
-    uint256 amount,
-    Decision indexed decision,
-    string reason
-  );
-
-  event PolicyUpdated(
-    address indexed recipient,
-    uint256 maxAmountPerTx,
-    uint256 maxAmountPerDay,
-    uint256 minDelayBetweenTx
-  );
-
-  event AgentAuthorized(address indexed agent, string[] permissions);
-  event AgentRevoked(address indexed agent);
-  event PolicyRecipientBlacklisted(address indexed recipient, bool isBlacklisted);
-
-  // ============================================================================
-  // MODIFIERS
-  // ============================================================================
-
-  modifier onlyOwner() {
-    require(msg.sender == owner, "X402: only owner");
-    _;
-  }
-
-  modifier onlyAuthorizedAgent() {
-    require(
-      agents[msg.sender].active && agents[msg.sender].revokeAt == 0,
-      "X402: agent not authorized"
-    );
-    _;
-  }
-
-  // ============================================================================
-  // CONSTRUCTOR
-  // ============================================================================
-
-  constructor() {
-    owner = msg.sender;
-  }
-
-  // ============================================================================
-  // AGENT MANAGEMENT
-  // ============================================================================
-
-  /// @notice Authorize an AI agent to make payment decisions
-  /// @param agent Address of the AI agent service
-  /// @param permissions Array of permission strings (e.g., "EVALUATE", "ENFORCE")
-  function authorizeAgent(address agent, string[] calldata permissions) external onlyOwner {
-    require(agent != address(0), "X402: invalid agent address");
-    agents[agent] = AgentPermission({
-      active: true,
-      revokeAt: 0,
-      permissions: permissions
-    });
-    emit AgentAuthorized(agent, permissions);
-  }
-
-  /// @notice Revoke an agent's authorization
-  /// @param agent Address of the agent to revoke
-  function revokeAgent(address agent) external onlyOwner {
-    agents[agent].revokeAt = block.timestamp;
-    emit AgentRevoked(agent);
-  }
-
-  // ============================================================================
-  // POLICY MANAGEMENT
-  // ============================================================================
-
-  /// @notice Set policy for a recipient address
-  /// @param recipient The recipient whose policy to configure
-  /// @param maxPerTx Maximum CRO per transaction
-  /// @param maxPerDay Maximum CRO per day
-  /// @param minDelay Minimum delay between transactions (seconds)
-  function setPolicyForRecipient(
-    address recipient,
-    uint256 maxPerTx,
-    uint256 maxPerDay,
-    uint256 minDelay
-  ) external onlyOwner {
-    require(recipient != address(0), "X402: invalid recipient");
-    policies[recipient] = RecipientPolicy({
-      exists: true,
-      maxAmountPerTx: maxPerTx,
-      maxAmountPerDay: maxPerDay,
-      minDelayBetweenTx: minDelay,
-      isBlacklisted: false,
-      allowedSenders: new address[](0)
-    });
-    emit PolicyUpdated(recipient, maxPerTx, maxPerDay, minDelay);
-  }
-
-  /// @notice Blacklist/whitelist a recipient
-  /// @param recipient Address to update
-  /// @param blacklist True to blacklist, false to remove from blacklist
-  function setRecipientBlacklist(address recipient, bool blacklist) external onlyOwner {
-    require(policies[recipient].exists, "X402: policy does not exist for recipient");
-    policies[recipient].isBlacklisted = blacklist;
-    emit PolicyRecipientBlacklisted(recipient, blacklist);
-  }
-
-  // ============================================================================
-  // CORE: EVALUATE PAYMENT DECISION
-  // ============================================================================
-
-  /// @notice Evaluate payment against on-chain policy rules
-  /// @param recipient Address receiving the payment
-  /// @param amount Amount of CRO being requested
-  /// @return decision The policy enforcement decision
-  /// @return reason Explanation for the decision
-  function evaluatePayment(
-    address recipient,
-    uint256 amount
-  ) external view onlyAuthorizedAgent returns (Decision, string memory) {
-    // Check if recipient is blacklisted
-    if (policies[recipient].isBlacklisted) {
-      return (Decision.BLOCK, "Recipient blacklisted");
+    
+    // ============================================================================
+    // STATE
+    // ============================================================================
+    
+    address public owner;
+    
+    // Global policies
+    uint256 public globalMaxPayment;           // Max single payment (0 = unlimited)
+    uint256 public globalDailyLimit;           // Max daily spend per sender (0 = unlimited)
+    bool public globalWhitelistEnabled;        // If true, only whitelisted recipients allowed
+    
+    // Per-sender policies
+    mapping(address => uint256) public senderMaxPayment;      // Per-sender cap (0 = use global)
+    mapping(address => uint256) public senderDailyLimit;      // Per-sender daily limit
+    mapping(address => bool) public senderBlocked;            // Blocked senders
+    
+    // Per-recipient policies  
+    mapping(address => bool) public recipientBlacklist;       // Blocked recipients
+    mapping(address => bool) public recipientWhitelist;       // Allowed recipients (if whitelist enabled)
+    
+    // Per-sender-recipient policies
+    mapping(address => mapping(address => bool)) public senderRecipientAllowed;  // Sender can pay recipient
+    mapping(address => mapping(address => uint256)) public senderRecipientMax;   // Max per recipient
+    
+    // Tracking for daily limits
+    mapping(address => uint256) public senderDailySpent;      // Amount spent today
+    mapping(address => uint256) public senderDayStart;        // When current day started
+    
+    // ============================================================================
+    // EVENTS
+    // ============================================================================
+    
+    event PolicyUpdated(string indexed policyType, address indexed target, uint256 value);
+    event SenderBlocked(address indexed sender, bool blocked);
+    event RecipientBlacklisted(address indexed recipient, bool blacklisted);
+    event RecipientWhitelisted(address indexed recipient, bool whitelisted);
+    
+    // ============================================================================
+    // MODIFIERS
+    // ============================================================================
+    
+    modifier onlyOwner() {
+        require(msg.sender == owner, "X402Policy: not owner");
+        _;
+    }
+    
+    // ============================================================================
+    // CONSTRUCTOR
+    // ============================================================================
+    
+    constructor() {
+        owner = msg.sender;
+        globalMaxPayment = 100000 ether;  // 100,000 CRO default max
+        globalDailyLimit = 500000 ether;  // 500,000 CRO daily default
+        globalWhitelistEnabled = false;   // Whitelist disabled by default
     }
 
-    // If no policy exists, default ALLOW
-    if (!policies[recipient].exists) {
-      return (Decision.ALLOW, "No policy configured");
+    // ============================================================================
+    // CORE: POLICY EVALUATION (Called by ExecutionRouter)
+    // ============================================================================
+    
+    /**
+     * @notice Evaluate a payment against all policies
+     * @dev This is the ONLY function the router needs to call
+     * @param sender The address paying (msg.sender in router)
+     * @param recipient The address receiving payment
+     * @param amount The payment amount in wei
+     * @return allowed True if payment passes all policies
+     * @return reason Human-readable explanation if denied
+     */
+    function evaluate(
+        address sender,
+        address recipient,
+        uint256 amount
+    ) external returns (bool allowed, string memory reason) {
+        
+        // ====== CHECK 1: Sender not blocked ======
+        if (senderBlocked[sender]) {
+            return (false, "Sender is blocked");
+        }
+        
+        // ====== CHECK 2: Recipient not blacklisted ======
+        if (recipientBlacklist[recipient]) {
+            return (false, "Recipient is blacklisted");
+        }
+        
+        // ====== CHECK 3: Whitelist check (if enabled) ======
+        if (globalWhitelistEnabled && !recipientWhitelist[recipient]) {
+            return (false, "Recipient not whitelisted");
+        }
+        
+        // ====== CHECK 4: Amount cap ======
+        uint256 maxPayment = senderMaxPayment[sender];
+        if (maxPayment == 0) {
+            maxPayment = globalMaxPayment;
+        }
+        if (maxPayment > 0 && amount > maxPayment) {
+            return (false, "Amount exceeds maximum");
+        }
+        
+        // ====== CHECK 5: Per-recipient cap ======
+        uint256 recipientMax = senderRecipientMax[sender][recipient];
+        if (recipientMax > 0 && amount > recipientMax) {
+            return (false, "Amount exceeds recipient limit");
+        }
+        
+        // ====== CHECK 6: Daily limit ======
+        uint256 dailyLimit = senderDailyLimit[sender];
+        if (dailyLimit == 0) {
+            dailyLimit = globalDailyLimit;
+        }
+        if (dailyLimit > 0) {
+            _updateDailyTracking(sender);
+            if (senderDailySpent[sender] + amount > dailyLimit) {
+                return (false, "Daily limit exceeded");
+            }
+            // Update spent amount
+            senderDailySpent[sender] += amount;
+        }
+        
+        // ====== CHECK 7: Sender-recipient allowlist (if configured) ======
+        // Only check if sender has explicit recipient restrictions
+        if (senderRecipientMax[sender][address(0)] > 0) {
+            // Sender has restrictions configured
+            if (!senderRecipientAllowed[sender][recipient]) {
+                return (false, "Recipient not allowed for sender");
+            }
+        }
+        
+        // All checks passed
+        return (true, "Policy checks passed");
+    }
+    
+    /**
+     * @notice View-only policy check (for simulation)
+     * @dev Does NOT update daily tracking
+     */
+    function evaluateView(
+        address sender,
+        address recipient,
+        uint256 amount
+    ) external view returns (bool allowed, string memory reason) {
+        
+        if (senderBlocked[sender]) {
+            return (false, "Sender is blocked");
+        }
+        
+        if (recipientBlacklist[recipient]) {
+            return (false, "Recipient is blacklisted");
+        }
+        
+        if (globalWhitelistEnabled && !recipientWhitelist[recipient]) {
+            return (false, "Recipient not whitelisted");
+        }
+        
+        uint256 maxPayment = senderMaxPayment[sender];
+        if (maxPayment == 0) maxPayment = globalMaxPayment;
+        if (maxPayment > 0 && amount > maxPayment) {
+            return (false, "Amount exceeds maximum");
+        }
+        
+        uint256 recipientMax = senderRecipientMax[sender][recipient];
+        if (recipientMax > 0 && amount > recipientMax) {
+            return (false, "Amount exceeds recipient limit");
+        }
+        
+        uint256 dailyLimit = senderDailyLimit[sender];
+        if (dailyLimit == 0) dailyLimit = globalDailyLimit;
+        if (dailyLimit > 0) {
+            uint256 spent = _getDailySpent(sender);
+            if (spent + amount > dailyLimit) {
+                return (false, "Daily limit exceeded");
+            }
+        }
+        
+        return (true, "Policy checks passed");
+    }
+    
+    // ============================================================================
+    // INTERNAL HELPERS
+    // ============================================================================
+    
+    function _updateDailyTracking(address sender) internal {
+        uint256 dayStart = senderDayStart[sender];
+        if (block.timestamp >= dayStart + 1 days) {
+            senderDailySpent[sender] = 0;
+            senderDayStart[sender] = block.timestamp;
+        }
+    }
+    
+    function _getDailySpent(address sender) internal view returns (uint256) {
+        if (block.timestamp >= senderDayStart[sender] + 1 days) {
+            return 0;
+        }
+        return senderDailySpent[sender];
     }
 
-    RecipientPolicy memory policy = policies[recipient];
-
-    // Check max per transaction
-    if (amount > policy.maxAmountPerTx) {
-      uint256 adjustedAmount = policy.maxAmountPerTx;
-      return (
-        Decision.LIMIT,
-        string(abi.encodePacked("Amount exceeds max per tx. Limited to ", _uintToString(adjustedAmount)))
-      );
+    // ============================================================================
+    // ADMIN: GLOBAL POLICIES
+    // ============================================================================
+    
+    function setGlobalMaxPayment(uint256 max) external onlyOwner {
+        globalMaxPayment = max;
+        emit PolicyUpdated("globalMaxPayment", address(0), max);
     }
-
-    // Check daily limit
-    uint256 spent = _getDailySpent(recipient);
-    if (spent + amount > policy.maxAmountPerDay) {
-      return (
-        Decision.LIMIT,
-        string(
-          abi.encodePacked(
-            "Exceeds daily limit. Remaining: ",
-            _uintToString(policy.maxAmountPerDay - spent)
-          )
-        )
-      );
+    
+    function setGlobalDailyLimit(uint256 limit) external onlyOwner {
+        globalDailyLimit = limit;
+        emit PolicyUpdated("globalDailyLimit", address(0), limit);
     }
-
-    // Check min delay between transactions
-    uint256 lastTxTime = lastPaymentTime[recipient];
-    if (lastTxTime > 0 && block.timestamp - lastTxTime < policy.minDelayBetweenTx) {
-      uint256 delayUntil = lastTxTime + policy.minDelayBetweenTx;
-      return (
-        Decision.DELAY,
-        string(
-          abi.encodePacked(
-            "Min delay not met. Retry after ",
-            _uintToString(delayUntil)
-          )
-        )
-      );
+    
+    function setGlobalWhitelistEnabled(bool enabled) external onlyOwner {
+        globalWhitelistEnabled = enabled;
     }
-
-    // All checks passed
-    return (Decision.ALLOW, "Policy checks passed");
-  }
-
-  // ============================================================================
-  // CORE: RECORD AND ENFORCE DECISION
-  // ============================================================================
-
-  /// @notice Record a payment decision from the AI agent (off-chain middleware)
-  /// @param sender Address attempting payment
-  /// @param recipient Address receiving payment
-  /// @param amount Amount of CRO
-  /// @param decision The AI agent's decision
-  /// @param reason Explanation from the AI agent
-  function recordDecision(
-    address sender,
-    address recipient,
-    uint256 amount,
-    Decision decision,
-    string calldata reason
-  ) external onlyAuthorizedAgent {
-    PaymentAttempt memory attempt = PaymentAttempt({
-      sender: sender,
-      recipient: recipient,
-      amount: amount,
-      timestamp: block.timestamp,
-      decision: decision,
-      reason: reason
-    });
-
-    attemptHistory.push(attempt);
-
-    // Update tracking if decision is ALLOW or LIMIT
-    if (decision == Decision.ALLOW || decision == Decision.LIMIT) {
-      lastPaymentTime[recipient] = block.timestamp;
-      _addToDailySpent(recipient, amount);
+    
+    // ============================================================================
+    // ADMIN: SENDER POLICIES
+    // ============================================================================
+    
+    function setSenderMaxPayment(address sender, uint256 max) external onlyOwner {
+        senderMaxPayment[sender] = max;
+        emit PolicyUpdated("senderMaxPayment", sender, max);
     }
-
-    emit PaymentDecisionRecorded(recipient, sender, amount, decision, reason);
-  }
-
-  // ============================================================================
-  // QUERY FUNCTIONS
-  // ============================================================================
-
-  /// @notice Get total number of recorded payment attempts
-  function getAttemptCount() external view returns (uint256) {
-    return attemptHistory.length;
-  }
-
-  /// @notice Get a specific payment attempt
-  function getAttempt(uint256 index)
-    external
-    view
-    returns (
-      address sender,
-      address recipient,
-      uint256 amount,
-      uint256 timestamp,
-      Decision decision,
-      string memory reason
-    )
-  {
-    require(index < attemptHistory.length, "X402: invalid attempt index");
-    PaymentAttempt memory attempt = attemptHistory[index];
-    return (
-      attempt.sender,
-      attempt.recipient,
-      attempt.amount,
-      attempt.timestamp,
-      attempt.decision,
-      attempt.reason
-    );
-  }
-
-  /// @notice Get last N payment attempts
-  function getRecentAttempts(uint256 count)
-    external
-    view
-    returns (PaymentAttempt[] memory)
-  {
-    uint256 length = attemptHistory.length;
-    uint256 start = length > count ? length - count : 0;
-    PaymentAttempt[] memory recent = new PaymentAttempt[](length - start);
-
-    for (uint256 i = start; i < length; i++) {
-      recent[i - start] = attemptHistory[i];
+    
+    function setSenderDailyLimit(address sender, uint256 limit) external onlyOwner {
+        senderDailyLimit[sender] = limit;
+        emit PolicyUpdated("senderDailyLimit", sender, limit);
     }
-    return recent;
-  }
-
-  /// @notice Check if an agent is currently authorized
-  function isAgentAuthorized(address agent) external view returns (bool) {
-    return agents[agent].active && agents[agent].revokeAt == 0;
-  }
-
-  // ============================================================================
-  // INTERNAL HELPERS
-  // ============================================================================
-
-  /// @dev Calculate daily spent amount, resetting if day has changed
-  function _getDailySpent(address recipient) internal view returns (uint256) {
-    // Simple day-based tracking: if last reset was today, return accumulated
-    if (dailySpentResetAt[recipient] + 1 days > block.timestamp) {
-      return dailySpent[recipient];
+    
+    function blockSender(address sender, bool blocked) external onlyOwner {
+        senderBlocked[sender] = blocked;
+        emit SenderBlocked(sender, blocked);
     }
-    return 0;
-  }
-
-  /// @dev Add amount to daily spent, resetting if day has changed
-  function _addToDailySpent(address recipient, uint256 amount) internal {
-    if (dailySpentResetAt[recipient] + 1 days > block.timestamp) {
-      dailySpent[recipient] += amount;
-    } else {
-      dailySpent[recipient] = amount;
-      dailySpentResetAt[recipient] = block.timestamp;
+    
+    // ============================================================================
+    // ADMIN: RECIPIENT POLICIES
+    // ============================================================================
+    
+    function blacklistRecipient(address recipient, bool blacklisted) external onlyOwner {
+        recipientBlacklist[recipient] = blacklisted;
+        emit RecipientBlacklisted(recipient, blacklisted);
     }
-  }
-
-  /// @dev Convert uint to string for error messages
-  function _uintToString(uint256 value) internal pure returns (string memory) {
-    if (value == 0) return "0";
-    uint256 temp = value;
-    uint256 digits = 0;
-    while (temp != 0) {
-      digits++;
-      temp /= 10;
+    
+    function whitelistRecipient(address recipient, bool whitelisted) external onlyOwner {
+        recipientWhitelist[recipient] = whitelisted;
+        emit RecipientWhitelisted(recipient, whitelisted);
     }
-    bytes memory buffer = new bytes(digits);
-    while (value != 0) {
-      digits--;
-      buffer[digits] = bytes1(uint8(48 + (value % 10)));
-      value /= 10;
+    
+    // ============================================================================
+    // ADMIN: SENDER-RECIPIENT POLICIES
+    // ============================================================================
+    
+    function setSenderRecipientAllowed(
+        address sender, 
+        address recipient, 
+        bool allowed
+    ) external onlyOwner {
+        senderRecipientAllowed[sender][recipient] = allowed;
+        // Mark that sender has restrictions by setting address(0) flag
+        if (allowed) {
+            senderRecipientMax[sender][address(0)] = 1;
+        }
     }
-    return string(buffer);
-  }
+    
+    function setSenderRecipientMax(
+        address sender,
+        address recipient,
+        uint256 max
+    ) external onlyOwner {
+        senderRecipientMax[sender][recipient] = max;
+    }
+    
+    // ============================================================================
+    // VIEW FUNCTIONS
+    // ============================================================================
+    
+    function getDailySpent(address sender) external view returns (uint256) {
+        return _getDailySpent(sender);
+    }
+    
+    function getDailyRemaining(address sender) external view returns (uint256) {
+        uint256 limit = senderDailyLimit[sender];
+        if (limit == 0) limit = globalDailyLimit;
+        if (limit == 0) return type(uint256).max;
+        
+        uint256 spent = _getDailySpent(sender);
+        if (spent >= limit) return 0;
+        return limit - spent;
+    }
+    
+    function transferOwnership(address newOwner) external onlyOwner {
+        require(newOwner != address(0), "Invalid owner");
+        owner = newOwner;
+    }
 }

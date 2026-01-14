@@ -1,0 +1,27 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: 'Inter', sans-serif;
+}
+
+.mono-text {
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+.glass-panel {
+  background: rgba(23, 47, 54, 0.6);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(32, 66, 75, 0.5);
+}
+
+/* Hide scrollbars */
+textarea::-webkit-scrollbar {
+  display: none;
+}
+
+textarea {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

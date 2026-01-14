@@ -1,0 +1,31 @@
+{
+  "name": "x402-intent-firewall",
+  "version": "1.0.0",
+  "description": "AI-Powered Pre-Execution Security Layer for Cronos EVM",
+  "main": "index.js",
+  "scripts": {
+    "compile": "hardhat compile",
+    "deploy:testnet": "hardhat run scripts/deploy.ts --network cronos-testnet",
+    "deploy:mainnet": "hardhat run scripts/deploy.ts --network cronos-mainnet",
+    "verify": "hardhat verify",
+    "test": "hardhat test",
+    "clean": "hardhat clean"
+  },
+  "keywords": [
+    "x402",
+    "cronos",
+    "evm",
+    "payment",
+    "firewall",
+    "ai",
+    "intent",
+    "security"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "dotenv": "^16.3.1",
+    "hardhat": "^2.19.0"
+  }
+}
