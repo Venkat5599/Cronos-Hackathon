@@ -28,8 +28,10 @@ import {
   JsonRpcProvider,
   BrowserProvider,
   ContractTransactionResponse,
-  ContractTransactionReceipt
+  ContractTransactionReceipt,
+  EventLog
 } from 'ethers';
+import { EventEmitter } from 'events';
 
 // ============================================================================
 // CONSTANTS
@@ -172,14 +174,54 @@ export interface SimulationResult {
 }
 
 // ============================================================================
+// EVENT TYPES
+// ============================================================================
+
+export interface PaymentExecutedEvent {
+  intentHash: string;
+  sender: string;
+  recipient: string;
+  amount: string;
+  timestamp: number;
+  txHash: string;
+}
+
+export interface PaymentBlockedEvent {
+  intentHash: string;
+  sender: string;
+  recipient: string;
+  amount: string;
+  reason: string;
+  txHash: string;
+}
+
+export interface IntentRegisteredEvent {
+  intentHash: string;
+  sender: string;
+  recipient: string;
+  amount: string;
+  expiry: number;
+  txHash: string;
+}
+
+export interface IntentApprovedEvent {
+  intentHash: string;
+  agent: string;
+  riskScore: number;
+  reason: string;
+  txHash: string;
+}
+
+// ============================================================================
 // MAIN SDK CLASS
 // ============================================================================
 
-export class X402Firewall {
+export class X402Firewall extends EventEmitter {
   private firewall: Contract;
   private policyEngine: Contract;
   private signer: Signer | null;
   private provider: Provider;
+  private eventListeners: Map<string, any> = new Map();
   
   constructor(
     signerOrProvider: Signer | Provider,
@@ -189,6 +231,8 @@ export class X402Firewall {
       network?: 'testnet' | 'mainnet';
     }
   ) {
+    super();
+    
     const network = options?.network || 'testnet';
     const addresses = DEPLOYED_CONTRACTS[network];
     
@@ -509,6 +553,182 @@ export class X402Firewall {
     if (!this.signer) throw new Error('Signer required');
     const tx = await this.policyEngine.blacklistRecipient(recipient, blacklisted);
     return tx.wait();
+  }
+
+  // ==========================================================================
+  // EVENT LISTENERS
+  // ==========================================================================
+
+  /**
+   * Listen to payment executed events
+   * 
+   * @example
+   * ```typescript
+   * firewall.onPaymentExecuted((event) => {
+   *   console.log('Payment sent:', event.amount, 'CRO to', event.recipient);
+   * });
+   * ```
+   */
+  onPaymentExecuted(callback: (event: PaymentExecutedEvent) => void): () => void {
+    const listener = async (...args: any[]) => {
+      const [intentHash, sender, recipient, amount, timestamp, event] = args;
+      callback({
+        intentHash,
+        sender,
+        recipient,
+        amount: formatEther(amount),
+        timestamp: Number(timestamp),
+        txHash: event.log.transactionHash,
+      });
+    };
+    
+    this.firewall.on('PaymentExecuted', listener);
+    this.eventListeners.set('PaymentExecuted', listener);
+    
+    // Return unsubscribe function
+    return () => this.firewall.off('PaymentExecuted', listener);
+  }
+
+  /**
+   * Listen to payment blocked events
+   */
+  onPaymentBlocked(callback: (event: PaymentBlockedEvent) => void): () => void {
+    const listener = async (...args: any[]) => {
+      const [intentHash, sender, recipient, amount, reason, event] = args;
+      callback({
+        intentHash,
+        sender,
+        recipient,
+        amount: formatEther(amount),
+        reason,
+        txHash: event.log.transactionHash,
+      });
+    };
+    
+    this.firewall.on('PaymentBlocked', listener);
+    this.eventListeners.set('PaymentBlocked', listener);
+    
+    return () => this.firewall.off('PaymentBlocked', listener);
+  }
+
+  /**
+   * Listen to intent registered events
+   */
+  onIntentRegistered(callback: (event: IntentRegisteredEvent) => void): () => void {
+    const listener = async (...args: any[]) => {
+      const [intentHash, sender, recipient, amount, expiry, event] = args;
+      callback({
+        intentHash,
+        sender,
+        recipient,
+        amount: formatEther(amount),
+        expiry: Number(expiry),
+        txHash: event.log.transactionHash,
+      });
+    };
+    
+    this.firewall.on('IntentRegistered', listener);
+    this.eventListeners.set('IntentRegistered', listener);
+    
+    return () => this.firewall.off('IntentRegistered', listener);
+  }
+
+  /**
+   * Listen to intent approved events
+   */
+  onIntentApproved(callback: (event: IntentApprovedEvent) => void): () => void {
+    const listener = async (...args: any[]) => {
+      const [intentHash, agent, riskScore, reason, event] = args;
+      callback({
+        intentHash,
+        agent,
+        riskScore: Number(riskScore),
+        reason,
+        txHash: event.log.transactionHash,
+      });
+    };
+    
+    this.firewall.on('IntentApproved', listener);
+    this.eventListeners.set('IntentApproved', listener);
+    
+    return () => this.firewall.off('IntentApproved', listener);
+  }
+
+  /**
+   * Remove all event listeners
+   */
+  removeAllListeners(): this {
+    this.firewall.removeAllListeners();
+    this.eventListeners.clear();
+    return this;
+  }
+
+  // ==========================================================================
+  // GAS ESTIMATION
+  // ==========================================================================
+
+  /**
+   * Estimate gas cost for a payment
+   * 
+   * @returns Estimated gas cost in CRO
+   * 
+   * @example
+   * ```typescript
+   * const cost = await firewall.estimatePaymentCost('0x...', '100');
+   * console.log('Will cost approximately', cost, 'CRO in gas');
+   * ```
+   */
+  async estimatePaymentCost(recipient: string, amountInCRO: string): Promise<{
+    gasLimit: bigint;
+    gasPrice: bigint;
+    gasCostInCRO: string;
+    totalCostInCRO: string;
+  }> {
+    const gasLimit = await this.firewall.executePayment.estimateGas(
+      recipient,
+      { value: parseEther(amountInCRO) }
+    );
+    
+    const feeData = await this.provider.getFeeData();
+    const gasPrice = feeData.gasPrice || 0n;
+    
+    const gasCost = gasLimit * gasPrice;
+    const totalCost = gasCost + parseEther(amountInCRO);
+    
+    return {
+      gasLimit,
+      gasPrice,
+      gasCostInCRO: formatEther(gasCost),
+      totalCostInCRO: formatEther(totalCost),
+    };
+  }
+
+  /**
+   * Estimate gas for intent execution
+   */
+  async estimateIntentCost(intentHash: string): Promise<{
+    gasLimit: bigint;
+    gasPrice: bigint;
+    gasCostInCRO: string;
+  }> {
+    const intent = await this.getIntent(intentHash);
+    if (!intent) throw new Error('Intent not found');
+    
+    const gasLimit = await this.firewall.executeIntent.estimateGas(
+      intentHash,
+      { value: parseEther(intent.amount) }
+    );
+    
+    const feeData = await this.provider.getFeeData();
+    const gasPrice = feeData.gasPrice || 0n;
+    
+    const gasCost = gasLimit * gasPrice;
+    
+    return {
+      gasLimit,
+      gasPrice,
+      gasCostInCRO: formatEther(gasCost),
+    };
   }
 
   // ==========================================================================

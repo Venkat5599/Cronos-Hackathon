@@ -15,6 +15,6 @@
     "resolveJsonModule": true,
     "moduleResolution": "node"
   },
-  "include": ["index.ts"],
+  "include": ["index.ts", "hooks.ts", "batch.ts", "errors.ts", "cli.ts"],
   "exclude": ["node_modules", "dist"]
 }

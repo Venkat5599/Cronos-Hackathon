@@ -294,35 +294,24 @@ Result:  REVERT("X402Firewall: Daily limit exceeded")
 
 ```
 x402-Intent-Firewall/
-│
-├── contracts/                      # Solidity smart contracts
-│   ├── X402PaymentFirewall.sol     # Main firewall (1 contract does it all)
-│   ├── X402PolicyEngine.sol        # Policy evaluation logic
-│   ├── X402IntentRegistry.sol      # Intent registration (standalone)
-│   └── X402ExecutionRouter.sol     # Execution router (standalone)
-│
-├── frontend/                       # React dashboard
-│   ├── src/
-│   │   ├── App.tsx                 # Main UI component
-│   │   ├── hooks/useContracts.ts   # Contract interaction hooks
-│   │   └── hooks/useWallet.ts      # MetaMask integration
-│   └── package.json
-│
-├── sdk/                            # TypeScript SDK for easy integration
-│   └── index.ts                    # X402Firewall class
-│
-├── scripts/                        # Deployment and testing
-│   ├── deploy-firewall.ts          # Deploy to Cronos
-│   ├── verify-contracts.ts         # Verify on explorer
-│   └── demo-full-flow.ts           # Full demo script
-│
-├── docs/                           # Documentation
-│   ├── ARCHITECTURE.md             # Technical deep-dive
-│   └── X402_INTEGRATION.md         # Integration guide
-│
-├── hardhat.config.ts               # Hardhat configuration
-└── package.json
+├── contracts/          # Solidity smart contracts
+├── frontend/           # React dashboard
+├── backend/            # Backend services
+├── sdk/                # TypeScript SDK (published to npm)
+├── scripts/            # Deployment scripts
+└── docs/               # Documentation
 ```
+
+---
+
+## 📚 Documentation
+
+- [Architecture](./docs/ARCHITECTURE.md) - Technical deep-dive
+- [Integration Guide](./docs/X402_INTEGRATION.md) - How to integrate
+- [Integration Patterns](./docs/INTEGRATION_PATTERNS.md) - Usage patterns
+- [SDK Features](./docs/SDK_FEATURES.md) - Complete SDK feature list
+- [SDK Roadmap](./docs/SDK_ROADMAP.md) - Future development plans
+- [v1.1.0 Release Notes](./docs/V1.1.0_RELEASE.md) - Latest release
 
 ---
 
@@ -372,11 +361,11 @@ npx hardhat run scripts/demo-full-flow.ts --network cronosTestnet
 
 | Resource | URL |
 |----------|-----|
+| **npm Package** | [View on npm](https://www.npmjs.com/package/@venkat5599/x402-firewall-sdk) |
 | **Firewall Contract** | [View on Explorer](https://cronos.org/explorer/testnet3/address/0xC3C4E069B294C8ED3841c87d527c942F873CFAA9#code) |
 | **PolicyEngine Contract** | [View on Explorer](https://cronos.org/explorer/testnet3/address/0xD0CE6F16969d81997750afE018A34921DeDd04A0#code) |
 | **Example Transaction** | [View TX](https://cronos.org/explorer/testnet3/tx/0x26f363226771f9e359b6ed74c67eef0d2314bd21e458dcbfde3583e7b460fbae) |
 | **Cronos Faucet** | [Get Test CRO](https://cronos.org/faucet) |
-| **Architecture Docs** | [ARCHITECTURE.md](./docs/ARCHITECTURE.md) |
 
 ---
 
@@ -385,8 +374,30 @@ npx hardhat run scripts/demo-full-flow.ts --network cronosTestnet
 - **Smart Contracts:** Solidity 0.8.19
 - **Development:** Hardhat, TypeScript
 - **Frontend:** React, Vite, TailwindCSS
+- **SDK:** TypeScript, ethers.js v6
 - **Blockchain:** Cronos EVM (Testnet)
-- **Wallet:** MetaMask, ethers.js v6
+
+---
+
+## 📦 Installation
+
+[![npm version](https://img.shields.io/npm/v/@venkat5599/x402-firewall-sdk.svg)](https://www.npmjs.com/package/@venkat5599/x402-firewall-sdk)
+[![npm downloads](https://img.shields.io/npm/dm/@venkat5599/x402-firewall-sdk.svg)](https://www.npmjs.com/package/@venkat5599/x402-firewall-sdk)
+
+```bash
+npm install @venkat5599/x402-firewall-sdk ethers
+```
+
+Quick start:
+
+```typescript
+import { X402Firewall } from '@venkat5599/x402-firewall-sdk';
+
+const firewall = new X402Firewall(signer, { network: 'testnet' });
+await firewall.pay('0xRecipient...', '100'); // 100 CRO
+```
+
+See [SDK documentation](./sdk/README.md) for full API reference.
 
 ---
 
@@ -397,19 +408,19 @@ npx hardhat run scripts/demo-full-flow.ts --network cronosTestnet
 - [x] Frontend dashboard
 - [x] TypeScript SDK
 - [x] Documentation
+- [x] **npm package published** 🎉
 - [ ] Security audit
 - [ ] Mainnet deployment
-- [ ] npm package publish
 - [ ] Multi-token support (ERC20)
 
 ---
 
 <div align="center">
 
-## Built for Cronos x402 Hackathon 2025
+## Built for Cronos x402 Hackathon 2025 🏆
 
-**Protecting AI Agent Payments on Cronos**
+**Winner: Best Dev Tooling**
 
-*Because autonomous doesn't mean unprotected.*
+*Protecting AI Agent Payments on Cronos*
 
 </div>

@@ -1,15 +1,37 @@
 {
-  "name": "@x402/firewall-sdk",
-  "version": "1.0.0",
+  "name": "@venkat5599/x402-firewall-sdk",
+  "version": "1.1.0",
   "description": "x402 Payment Firewall SDK - On-chain security for autonomous agent payments on Cronos",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "x402-firewall": "dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./hooks": {
+      "types": "./dist/hooks.d.ts",
+      "default": "./dist/hooks.js"
+    },
+    "./batch": {
+      "types": "./dist/batch.d.ts",
+      "default": "./dist/batch.js"
+    },
+    "./errors": {
+      "types": "./dist/errors.d.ts",
+      "default": "./dist/errors.js"
+    }
+  },
   "files": [
     "dist"
   ],
   "scripts": {
     "build": "tsc",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "cli": "node dist/cli.js"
   },
   "keywords": [
     "x402",
@@ -20,24 +42,41 @@
     "blockchain",
     "web3",
     "ai-agents",
-    "autonomous-payments"
+    "autonomous-payments",
+    "react-hooks",
+    "typescript",
+    "cli"
   ],
   "author": "x402 Hackathon Team",
   "license": "MIT",
+  "homepage": "https://github.com/Venkat5599/x402-Intent-Firewall#readme",
+  "bugs": {
+    "url": "https://github.com/Venkat5599/x402-Intent-Firewall/issues"
+  },
   "dependencies": {
     "ethers": "^6.16.0"
   },
   "devDependencies": {
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "@types/react": "^18.0.0"
   },
   "peerDependencies": {
-    "ethers": "^6.0.0"
+    "ethers": "^6.0.0",
+    "react": "^18.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/x402/payment-firewall"
+    "url": "git+https://github.com/Venkat5599/x402-Intent-Firewall.git"
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
